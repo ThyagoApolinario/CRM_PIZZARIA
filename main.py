@@ -781,20 +781,31 @@ elif secao == "💬 Comunicação":
         template_default = comm_engine.TEMPLATES.get(cluster_selecionado, comm_engine.TEMPLATES["Em Risco"])
         template_base = template_default["whatsapp"] if canal == "WhatsApp" else template_default["email"]
 
-        template_custom = st.text_area(
-            "Edite o template (variáveis: {nome}, {oferta}, {dias_sem_comprar}, {tempo_casa}):",
-            value=template_base,
-            height=150
-        )
+        # Opções de template
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            usar_dinamico = st.checkbox("🤖 Usar Template Dinâmico?", value=False)
+        with col2:
+            mostrar_validacao = st.checkbox("✓ Validar Template?", value=True)
+        with col3:
+            mostrar_comparacao = st.checkbox("📊 Comparar Templates?", value=False)
 
-        # Botão para gerar template dinâmico
-        if st.button("✨ Gerar Template Dinâmico", use_container_width=True):
-            # Calcular recência média do cluster
+        template_custom = template_base
+
+        if not usar_dinamico:
+            template_custom = st.text_area(
+                "Edite o template (variáveis: {nome}, {oferta}, {dias_sem_comprar}, {tempo_casa}):",
+                value=template_base,
+                height=150,
+                key="template_editor"
+            )
+
+        # Gerar template dinâmico se selecionado
+        if usar_dinamico:
             recencia_media = int(df_campaign['recencia'].mean()) if len(df_campaign) > 0 else 30
             oferta_media = df_campaign['oferta_sugerida'].mode()[0] if len(df_campaign) > 0 and 'oferta_sugerida' in df_campaign.columns else "Desconto especial"
 
-            # Gerar template dinâmico (usando um nome genérico como referência)
-            template_gerado = comm_engine.generate_dynamic_template(
+            resultado_dinamico = comm_engine.generate_dynamic_template(
                 nome="Cliente",
                 cluster=cluster_selecionado,
                 dias_sem_comprar=recencia_media,
@@ -802,24 +813,79 @@ elif secao == "💬 Comunicação":
                 canal="whatsapp" if canal == "WhatsApp" else "email"
             )
 
-            st.session_state['template_dinamico'] = template_gerado
+            template_custom = resultado_dinamico['template']
 
-        # Se há template dinâmico gerado, usá-lo
-        if 'template_dinamico' in st.session_state:
-            template_custom = st.session_state['template_dinamico']
-            st.info("✨ Usando template dinâmico gerado! Você pode ainda editar abaixo.")
+            with st.expander("📋 Composição do Template Dinâmico"):
+                blocos = resultado_dinamico['metadata']['blocos_usados']
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Saudação:**", blocos['saudacao'][:60])
+                    st.write("**Gancho (Recência):**", blocos['gancho'][:60])
+                with col2:
+                    st.write("**Oferta:**", blocos['oferta'][:60])
+                    st.write("**CTA:**", blocos['cta'][:60])
+                st.write("**Fechamento:**", blocos['fechamento'][:80])
+
+        # Validar template se selecionado
+        if mostrar_validacao and template_custom:
+            validacao = comm_engine.validar_template(template_custom)
+            if validacao['valido']:
+                st.success(f"✅ Template válido! Variáveis: {', '.join(validacao['variaveis_encontradas'])}")
+            else:
+                st.warning(f"⚠️ Variáveis faltando: {', '.join(validacao['variaveis_faltando'])}")
+
+        # Comparar múltiplos templates
+        if mostrar_comparacao:
+            st.subheader("📊 Comparação de Templates")
+
+            templates_para_comparar = [
+                {
+                    "nome_template": "Template Padrão",
+                    "template": template_base,
+                    "nome": "João",
+                    "oferta": "15% de desconto",
+                    "dias": 30,
+                    "cluster": cluster_selecionado
+                },
+                {
+                    "nome_template": "Template Customizado",
+                    "template": template_custom if template_custom != template_base else None,
+                    "nome": "João",
+                    "oferta": "15% de desconto",
+                    "dias": 30,
+                    "cluster": cluster_selecionado,
+                    "dinamico": usar_dinamico
+                }
+            ]
+
+            comparacao = comm_engine.comparar_templates(templates_para_comparar)
+
+            for tpl in comparacao['templates']:
+                with st.expander(f"{tpl['nome']} ({tpl['tipo']}) - {tpl['comprimento']} caracteres"):
+                    st.text(tpl['preview'])
+                    if tpl['validacao']:
+                        if tpl['validacao']['valido']:
+                            st.success(f"✅ Válido - Variáveis: {', '.join(tpl['validacao']['variaveis_encontradas'])}")
+                        else:
+                            st.warning(f"⚠️ Faltam: {', '.join(tpl['validacao']['variaveis_faltando'])}")
 
         # Preview
         st.subheader("👀 Preview (3 primeiros clientes)")
 
         previews = comm_engine.preview_campaign(
             df_campaign.head(3),
-            template_custom=template_custom if template_custom != template_base else None
+            template_custom=template_custom if template_custom != template_base else None,
+            usar_dinamico=usar_dinamico
         )
 
         for preview in previews:
-            with st.expander(f"🧑 {preview['cliente']} | Score: {preview['score_propensao']}"):
+            with st.expander(f"🧑 {preview['cliente']} | Score: {preview['score_propensao']} | {preview['tipo_template']}"):
                 st.text(preview['mensagem'])
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.caption(f"📊 Comprimento: {preview['comprimento']} caracteres")
+                with col2:
+                    st.caption(f"🏷️ Tipo: {preview['tipo_template']}")
 
         st.divider()
 
@@ -837,7 +903,8 @@ elif secao == "💬 Comunicação":
                         oferta=row.get('oferta_sugerida'),
                         dias_sem_comprar=int(row.get('recencia', 0)),
                         cluster=cluster_selecionado,
-                        template_custom=template_custom if template_custom != template_base else None
+                        template_custom=template_custom if template_custom != template_base else None,
+                        usar_dinamico=usar_dinamico
                     )
 
                     wa_link = comm_engine.generate_whatsapp_link(
@@ -847,10 +914,12 @@ elif secao == "💬 Comunicação":
                     )
 
                     if wa_link:
-                        col1, col2 = st.columns([1, 4])
+                        col1, col2, col3 = st.columns([1, 2, 2])
                         with col1:
                             st.write(f"**{row.get('nome')}**")
                         with col2:
+                            st.caption(f"Score: {row.get('score_propensao'):.1f}")
+                        with col3:
                             st.markdown(f"[🔗 Abrir WhatsApp]({wa_link})", unsafe_allow_html=True)
 
             else:
@@ -863,7 +932,8 @@ elif secao == "💬 Comunicação":
                         cluster=cluster_selecionado,
                         dias_sem_comprar=int(row.get('recencia', 0)),
                         tempo_casa=int(row.get('tempo_casa', 0)),
-                        template_custom=template_custom if template_custom != template_base else None
+                        template_custom=template_custom if template_custom != template_base else None,
+                        usar_dinamico=usar_dinamico
                     )
 
                     payload = comm_engine.prepare_webhook_payload(
@@ -872,7 +942,7 @@ elif secao == "💬 Comunicação":
                             'email': row.get('email'),
                             'ddd': row.get('ddd'),
                             'telefone': row.get('telefone'),
-                            'mensagem': email_msg,
+                            'mensagem': email_msg['mensagem'],
                             'oferta': row.get('oferta_sugerida'),
                             'cluster': cluster_selecionado,
                             'score_propensao': row.get('score_propensao'),
@@ -881,8 +951,9 @@ elif secao == "💬 Comunicação":
                         channel='email'
                     )
 
-                    with st.expander(f"📧 {row.get('nome')} ({row.get('email')})"):
+                    with st.expander(f"📧 {row.get('nome')} ({row.get('email')}) | {email_msg['tipo']}"):
                         st.code(payload, language='json')
+                        st.caption(f"Comprimento: {email_msg['comprimento']} caracteres")
 
 
 # ==================== SEÇÃO D: ROI & COHORT ====================

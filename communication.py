@@ -113,17 +113,19 @@ class CommunicationEngine:
             return "muito_longo"
 
     def _detectar_tipo_oferta(self, oferta: str) -> str:
-        """Detecta tipo de oferta por keywords na string"""
+        """Detecta tipo de oferta por keywords (case-insensitive)"""
         oferta_lower = oferta.lower()
 
-        if "frete" in oferta_lower or "grátis" in oferta_lower:
+        if any(word in oferta_lower for word in ["frete", "grátis", "gratis", "shipment"]):
             return "frete_gratis"
-        elif "brinde" in oferta_lower or "present" in oferta_lower:
+        elif any(word in oferta_lower for word in ["brinde", "present", "surpresa", "gift"]):
             return "brinde"
-        elif "combo" in oferta_lower or "bundle" in oferta_lower or "kit" in oferta_lower:
+        elif any(word in oferta_lower for word in ["combo", "bundle", "kit", "set"]):
             return "bundle"
-        else:
+        elif any(word in oferta_lower for word in ["desconto", "discount", "%", "off"]):
             return "desconto"
+        else:
+            return "desconto"  # fallback padrão
 
     def _selecionar_bloco_determinista(self, opcoes: List[str], nome_cliente: str) -> str:
         """Seleciona um bloco da lista de forma determinista baseado no nome do cliente"""
@@ -139,26 +141,25 @@ class CommunicationEngine:
         cluster: str,
         dias_sem_comprar: int,
         oferta: str,
-        canal: str = "whatsapp"
-    ) -> str:
+        canal: str = "whatsapp",
+        variáveis_custom: Optional[Dict] = None
+    ) -> Dict:
         """
-        Gera um template dinâmico combinando blocos variáveis
+        Gera um template dinâmico com blocos variáveis
 
         Args:
-            nome: Nome do cliente (usado para seleção determinista)
-            cluster: Nome do cluster (Campeões, Fiéis Ticket Baixo, Em Risco, Adormecidos)
-            dias_sem_comprar: Dias desde último pedido
-            oferta: Descrição da oferta
-            canal: "whatsapp" ou "email"
+            nome, cluster, dias_sem_comprar, oferta, canal: dados do cliente
+            variáveis_custom: Dict com variáveis adicionais {chave: valor}
 
         Returns:
-            String de template pronto para usar com .format()
+            Dict com 'template', 'preview', e 'metadata'
         """
-        # Detectar contextos
+        variáveis_custom = variáveis_custom or {}
+
         nivel_recencia = self._detectar_nivel_recencia(dias_sem_comprar)
         tipo_oferta = self._detectar_tipo_oferta(oferta)
 
-        # Selecionar blocos de forma determinista
+        # Selecionar blocos
         saudacao = self._selecionar_bloco_determinista(
             self.BLOCOS["saudacao"].get(cluster, self.BLOCOS["saudacao"]["Em Risco"])[canal],
             nome
@@ -184,14 +185,62 @@ class CommunicationEngine:
             f"{nome}_fechamento"
         )
 
-        # Montar template final
+        # Montar template com separadores
         if canal == "whatsapp":
             template = f"{saudacao}\n\n{gancho}\n\n{bloco_oferta}\n\n{cta}\n\n{fechamento}"
         else:
-            # Email é mais formal
-            template = f"{saudacao}\n\n{gancho} {bloco_oferta}\n\n{cta}\n\n{fechamento}"
+            template = f"{saudacao}\n\n{gancho}\n{bloco_oferta}\n\n{cta}\n\n{fechamento}"
 
-        return template
+        # Gerar preview com substituições
+        preview = self._aplicar_variaveis_ao_template(
+            template, nome, dias_sem_comprar, oferta, variáveis_custom
+        )
+
+        return {
+            "template": template,
+            "preview": preview,
+            "metadata": {
+                "cluster": cluster,
+                "canal": canal,
+                "tipo_oferta": tipo_oferta,
+                "nivel_recencia": nivel_recencia,
+                "blocos_usados": {
+                    "saudacao": saudacao,
+                    "gancho": gancho,
+                    "oferta": bloco_oferta,
+                    "cta": cta,
+                    "fechamento": fechamento
+                }
+            }
+        }
+
+    def _aplicar_variaveis_ao_template(
+        self,
+        template: str,
+        nome: str,
+        dias_sem_comprar: int,
+        oferta: str,
+        variáveis_custom: Optional[Dict] = None
+    ) -> str:
+        """Aplica variáveis ao template com tratamento de erros"""
+        variáveis_custom = variáveis_custom or {}
+
+        # Montar dicionário de substituição
+        variaveis = {
+            "nome": nome,
+            "dias_sem_comprar": dias_sem_comprar,
+            "oferta": oferta,
+            **variáveis_custom
+        }
+
+        try:
+            return template.format(**variaveis)
+        except KeyError as e:
+            # Se faltar variável, usar placeholder
+            chave_faltando = str(e).strip("'")
+            placeholder = f"[{chave_faltando}]"
+            template_seguro = template.replace("{" + chave_faltando + "}", placeholder)
+            return template_seguro.format(**{k: v for k, v in variaveis.items() if "{" + k + "}" in template_seguro})
 
     def format_whatsapp_message(
         self,
@@ -200,36 +249,67 @@ class CommunicationEngine:
         dias_sem_comprar: int = 0,
         cluster: str = "Em Risco",
         tempo_casa: int = 0,
-        template_custom: Optional[str] = None
+        template_custom: Optional[str] = None,
+        usar_dinamico: bool = False
     ) -> Dict[str, str]:
         """
         Formata uma mensagem WhatsApp personalizada
 
+        Args:
+            usar_dinamico: Se True, usa geração dinâmica de blocos
+            template_custom: Template manual (sobrescreve tudo)
+
         Retorna:
-            {
-                "mensagem": "Texto formatado",
-                "url_whatsapp": "wa.me/55[DDD][Telefone]?text=..."
-            }
+            Dict com 'mensagem', 'comprimento', e 'metadata'
         """
-
-        # Usar template customizado ou padrão
         if template_custom:
-            template = template_custom
+            # Template manual direto
+            try:
+                mensagem = template_custom.format(
+                    nome=nome,
+                    oferta=oferta,
+                    dias_sem_comprar=dias_sem_comprar,
+                    tempo_casa=tempo_casa
+                )
+            except KeyError as e:
+                # Se faltar variável, deixar placeholder
+                mensagem = template_custom
+
+            return {
+                "mensagem": mensagem,
+                "comprimento": len(mensagem),
+                "tipo": "custom"
+            }
+
+        elif usar_dinamico:
+            # Usar geração dinâmica de blocos
+            resultado = self.generate_dynamic_template(
+                nome=nome,
+                cluster=cluster,
+                dias_sem_comprar=dias_sem_comprar,
+                oferta=oferta,
+                canal="whatsapp",
+                variáveis_custom={"tempo_casa": tempo_casa}
+            )
+            return {
+                "mensagem": resultado["preview"],
+                "comprimento": len(resultado["preview"]),
+                "tipo": "dinamico",
+                "metadata": resultado["metadata"]
+            }
+
         else:
+            # Usar template padrão do cluster
             template = self.TEMPLATES.get(cluster, self.TEMPLATES["Em Risco"])["whatsapp"]
+            mensagem = self._aplicar_variaveis_ao_template(
+                template, nome, dias_sem_comprar, oferta, {"tempo_casa": tempo_casa}
+            )
 
-        # Substituir variáveis
-        mensagem = template.format(
-            nome=nome,
-            oferta=oferta,
-            dias_sem_comprar=dias_sem_comprar,
-            tempo_casa=tempo_casa
-        )
-
-        return {
-            "mensagem": mensagem,
-            "comprimento": len(mensagem)
-        }
+            return {
+                "mensagem": mensagem,
+                "comprimento": len(mensagem),
+                "tipo": "padrao"
+            }
 
 
     def generate_whatsapp_link(
@@ -269,25 +349,55 @@ class CommunicationEngine:
         cluster: str = "Em Risco",
         dias_sem_comprar: int = 0,
         tempo_casa: int = 0,
-        template_custom: Optional[str] = None
-    ) -> str:
+        template_custom: Optional[str] = None,
+        usar_dinamico: bool = False
+    ) -> Dict[str, str]:
         """
         Formata uma mensagem de E-mail personalizada
-        """
 
+        Args:
+            usar_dinamico: Se True, usa geração dinâmica de blocos
+            template_custom: Template manual
+
+        Retorna:
+            Dict com 'mensagem', 'comprimento', e 'metadata'
+        """
         if template_custom:
-            template = template_custom
+            mensagem = self._aplicar_variaveis_ao_template(
+                template_custom, nome, dias_sem_comprar, oferta, {"tempo_casa": tempo_casa}
+            )
+            return {
+                "mensagem": mensagem,
+                "comprimento": len(mensagem),
+                "tipo": "custom"
+            }
+
+        elif usar_dinamico:
+            resultado = self.generate_dynamic_template(
+                nome=nome,
+                cluster=cluster,
+                dias_sem_comprar=dias_sem_comprar,
+                oferta=oferta,
+                canal="email",
+                variáveis_custom={"tempo_casa": tempo_casa}
+            )
+            return {
+                "mensagem": resultado["preview"],
+                "comprimento": len(resultado["preview"]),
+                "tipo": "dinamico",
+                "metadata": resultado["metadata"]
+            }
+
         else:
             template = self.TEMPLATES.get(cluster, self.TEMPLATES["Em Risco"])["email"]
-
-        mensagem = template.format(
-            nome=nome,
-            oferta=oferta,
-            dias_sem_comprar=dias_sem_comprar,
-            tempo_casa=tempo_casa
-        )
-
-        return mensagem
+            mensagem = self._aplicar_variaveis_ao_template(
+                template, nome, dias_sem_comprar, oferta, {"tempo_casa": tempo_casa}
+            )
+            return {
+                "mensagem": mensagem,
+                "comprimento": len(mensagem),
+                "tipo": "padrao"
+            }
 
 
     def prepare_webhook_payload(
@@ -353,12 +463,12 @@ class CommunicationEngine:
         self,
         df_campaign: any,
         n_preview: int = 3,
-        template_custom: Optional[str] = None
+        template_custom: Optional[str] = None,
+        usar_dinamico: bool = False
     ) -> List[Dict]:
         """
         Retorna preview de N mensagens da campanha
         """
-
         previews = []
 
         for idx, row in df_campaign.head(n_preview).iterrows():
@@ -368,7 +478,8 @@ class CommunicationEngine:
                 dias_sem_comprar=int(row.get('recencia', 0)),
                 cluster=row.get('cluster_nome'),
                 tempo_casa=int(row.get('tempo_casa', 0)),
-                template_custom=template_custom
+                template_custom=template_custom,
+                usar_dinamico=usar_dinamico
             )
 
             preview = {
@@ -377,8 +488,77 @@ class CommunicationEngine:
                 "score_propensao": round(row.get('score_propensao', 0), 1),
                 "mensagem": whatsapp_msg['mensagem'],
                 "comprimento": whatsapp_msg['comprimento'],
+                "tipo_template": whatsapp_msg.get('tipo', 'padrao')
             }
 
             previews.append(preview)
 
         return previews
+
+    def validar_template(self, template: str, obrigatorio: List[str] = None) -> Dict:
+        """
+        Valida um template verificando se tem todas as variáveis necessárias
+
+        Args:
+            template: String de template
+            obrigatorio: Lista de variáveis que DEVEM estar no template
+
+        Retorna:
+            Dict com 'valido', 'variaveis_faltando', 'variaveis_encontradas'
+        """
+        import re
+
+        obrigatorio = obrigatorio or ["nome", "oferta"]
+        variaveis_encontradas = set(re.findall(r'{(\w+)}', template))
+        variaveis_faltando = set(obrigatorio) - variaveis_encontradas
+
+        return {
+            "valido": len(variaveis_faltando) == 0,
+            "variaveis_encontradas": list(variaveis_encontradas),
+            "variaveis_faltando": list(variaveis_faltando),
+            "comprimento": len(template)
+        }
+
+    def listar_templates_disponiveis(self) -> Dict:
+        """Retorna lista de todos os templates disponíveis por cluster e canal"""
+        return {
+            cluster: {
+                "whatsapp": self.TEMPLATES[cluster]["whatsapp"][:100] + "...",
+                "email": self.TEMPLATES[cluster]["email"][:100] + "..."
+            }
+            for cluster in self.TEMPLATES.keys()
+        }
+
+    def comparar_templates(self, templates: List[Dict]) -> Dict:
+        """
+        Compara múltiplos templates lado a lado
+
+        Args:
+            templates: Lista de dicts {'nome': str, 'template': str, 'nome': str, 'oferta': str, 'dias': int}
+
+        Retorna:
+            Dict com comparação e métricas
+        """
+        comparacao = []
+
+        for tpl in templates:
+            resultado = self.format_whatsapp_message(
+                nome=tpl.get('nome', 'João'),
+                oferta=tpl.get('oferta', '15% de desconto'),
+                dias_sem_comprar=tpl.get('dias', 30),
+                cluster=tpl.get('cluster', 'Em Risco'),
+                template_custom=tpl.get('template'),
+                usar_dinamico=tpl.get('dinamico', False)
+            )
+
+            validacao = self.validar_template(tpl.get('template', '')) if tpl.get('template') else None
+
+            comparacao.append({
+                "nome": tpl.get('nome_template', 'Template'),
+                "comprimento": resultado['comprimento'],
+                "tipo": resultado.get('tipo'),
+                "preview": resultado['mensagem'][:150] + "...",
+                "validacao": validacao
+            })
+
+        return {"templates": comparacao, "total": len(comparacao)}
