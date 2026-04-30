@@ -1,0 +1,29 @@
+# Environment
+venv/
+*.pyc
+__pycache__/
+.env
+.env.local
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/secrets.local.toml
+
+# Temp files
+*.tmp
+/tmp/
+*.csv.backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.cache/
+*.cache
