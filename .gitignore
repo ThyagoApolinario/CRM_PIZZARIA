@@ -27,3 +27,25 @@ Thumbs.db
 # Cache
 .cache/
 *.cache
+
+# Streamlit cache
+.streamlit/logger/
+.streamlit/static/
+
+# Logs
+*.log
+app.log
+
+# Data files (optional - comentar se quiser versioná-los)
+# data/*.csv
+# data/*.xlsx
+
+# Pytest
+.pytest_cache/
+.coverage
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node (se usar streamlit components)
+node_modules/
