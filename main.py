@@ -751,10 +751,35 @@ elif secao == "💬 Comunicação":
             height=150
         )
 
+        # Botão para gerar template dinâmico
+        if st.button("✨ Gerar Template Dinâmico", use_container_width=True):
+            # Calcular recência média do cluster
+            recencia_media = int(df_campaign['recencia'].mean()) if len(df_campaign) > 0 else 30
+            oferta_media = df_campaign['oferta_sugerida'].mode()[0] if len(df_campaign) > 0 and 'oferta_sugerida' in df_campaign.columns else "Desconto especial"
+
+            # Gerar template dinâmico (usando um nome genérico como referência)
+            template_gerado = comm_engine.generate_dynamic_template(
+                nome="Cliente",
+                cluster=cluster_selecionado,
+                dias_sem_comprar=recencia_media,
+                oferta=oferta_media,
+                canal="whatsapp" if canal == "WhatsApp" else "email"
+            )
+
+            st.session_state['template_dinamico'] = template_gerado
+
+        # Se há template dinâmico gerado, usá-lo
+        if 'template_dinamico' in st.session_state:
+            template_custom = st.session_state['template_dinamico']
+            st.info("✨ Usando template dinâmico gerado! Você pode ainda editar abaixo.")
+
         # Preview
         st.subheader("👀 Preview (3 primeiros clientes)")
 
-        previews = comm_engine.preview_campaign(df_campaign.head(3))
+        previews = comm_engine.preview_campaign(
+            df_campaign.head(3),
+            template_custom=template_custom if template_custom != template_base else None
+        )
 
         for preview in previews:
             with st.expander(f"🧑 {preview['cliente']} | Score: {preview['score_propensao']}"):
@@ -796,18 +821,22 @@ elif secao == "💬 Comunicação":
                 st.success("✅ Payloads E-mail gerados!")
 
                 for idx, row in df_campaign.head(5).iterrows():
+                    email_msg = comm_engine.format_email_message(
+                        nome=row.get('nome'),
+                        oferta=row.get('oferta_sugerida'),
+                        cluster=cluster_selecionado,
+                        dias_sem_comprar=int(row.get('recencia', 0)),
+                        tempo_casa=int(row.get('tempo_casa', 0)),
+                        template_custom=template_custom if template_custom != template_base else None
+                    )
+
                     payload = comm_engine.prepare_webhook_payload(
                         {
                             'nome': row.get('nome'),
                             'email': row.get('email'),
                             'ddd': row.get('ddd'),
                             'telefone': row.get('telefone'),
-                            'mensagem': template_custom.format(
-                                nome=row.get('nome'),
-                                oferta=row.get('oferta_sugerida'),
-                                dias_sem_comprar=int(row.get('recencia', 0)),
-                                tempo_casa=int(row.get('tempo_casa', 0))
-                            ),
+                            'mensagem': email_msg,
                             'oferta': row.get('oferta_sugerida'),
                             'cluster': cluster_selecionado,
                             'score_propensao': row.get('score_propensao'),
