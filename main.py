@@ -259,6 +259,39 @@ if secao == "🔍 Diagnóstico":
                 if removidos > 0:
                     etapas.append((f"❌ Sem Telefone ou vazio (obrigatório)", len(df_sim), removidos))
 
+            # ===== VALIDAÇÕES FINANCEIRAS (como o analytics faz) =====
+            # Remover Pedidos <= 0
+            if 'pedidos' in df_sim.columns:
+                antes = len(df_sim)
+                # Converter para numérico
+                df_sim['pedidos'] = pd.to_numeric(df_sim['pedidos'], errors='coerce')
+                df_sim = df_sim[df_sim['pedidos'] > 0].reset_index(drop=True)
+                removidos = antes - len(df_sim)
+                if removidos > 0:
+                    etapas.append((f"❌ Registros com Pedidos ≤ 0", len(df_sim), removidos))
+
+            # Remover Valor <= 0
+            if 'total' in df_sim.columns or 'valor' in df_sim.columns:
+                antes = len(df_sim)
+                col_valor = 'total' if 'total' in df_sim.columns else 'valor'
+                df_sim[col_valor] = pd.to_numeric(df_sim[col_valor], errors='coerce')
+                df_sim = df_sim[df_sim[col_valor] > 0].reset_index(drop=True)
+                removidos = antes - len(df_sim)
+                if removidos > 0:
+                    etapas.append((f"❌ Registros com Valor ≤ 0", len(df_sim), removidos))
+
+                # FLAG clientes VIP (em vez de remover)
+                antes = len(df_sim)
+                col_valor = 'total' if 'total' in df_sim.columns else 'valor'
+                Q1 = df_sim[col_valor].quantile(0.25)
+                Q3 = df_sim[col_valor].quantile(0.75)
+                IQR = Q3 - Q1
+                limite_superior = Q3 + (3 * IQR)
+                df_sim['flag_vip'] = df_sim[col_valor] > limite_superior
+                vips = df_sim['flag_vip'].sum()
+                if vips > 0:
+                    etapas.append((f"👑 {vips} clientes VIP identificados (acima de R$ {limite_superior:,.2f})", len(df_sim), -vips))
+
             # Mostrar etapas
             for etapa, qtd, remov in etapas:
                 if remov > 0:
@@ -639,11 +672,14 @@ elif secao == "📋 Mesa de Ativação":
             )
 
         # Aplicar filtros
+        # Nota: Incluir NaN no filtro de mês para não excluir clientes sem data de aniversário
+        filtro_mes = (df['mes_aniversario'].isin(meses)) | (df['mes_aniversario'].isna())
+
         df_filtered = df[
             (df['cluster_nome'].isin(clusters)) &
             (df['score_propensao'] >= propensao_range[0]) &
             (df['score_propensao'] <= propensao_range[1]) &
-            (df['mes_aniversario'].isin(meses))
+            filtro_mes
         ].copy()
 
         st.info(f"📌 {len(df_filtered)} clientes selecionados")

@@ -182,18 +182,17 @@ class AnalyticsEngine:
             if removidos_valor > 0:
                 print(f"   ❌ Removidos {removidos_valor} registros com Valor <= 0")
 
-            # Detectar e remover outliers extremos no Valor
+            # FLAG outliers extremos (em vez de remover)
             if 'valor_total' in df.columns:
                 Q1 = df['valor_total'].quantile(0.25)
                 Q3 = df['valor_total'].quantile(0.75)
                 IQR = Q3 - Q1
-                limite_superior = Q3 + (3 * IQR)  # 3x IQR é outlier extremo
+                limite_superior = Q3 + (3 * IQR)
 
-                antes_outlier = len(df)
-                df = df[df['valor_total'] <= limite_superior].reset_index(drop=True)
-                removidos_outlier = antes_outlier - len(df)
-                if removidos_outlier > 0:
-                    print(f"   ⚠️  Removidos {removidos_outlier} outliers extremos de Valor (acima de R$ {limite_superior:,.2f})")
+                df['flag_vip_valor'] = df['valor_total'] > limite_superior
+                vip_count = df['flag_vip_valor'].sum()
+                if vip_count > 0:
+                    print(f"   👑 {vip_count} clientes VIP identificados (acima de R$ {limite_superior:,.2f})")
 
             print(f"\n   ✅ Após validação: {len(df)} clientes com dados íntegros")
 
@@ -278,6 +277,7 @@ class AnalyticsEngine:
     def segment_customers(self, df, n_clusters=4):
         """
         Aplica K-Means em R, F, V (normalizados) e nomeia clusters automaticamente
+        Identifica e marca clientes VIP de alto valor
         """
         df = df.copy()
 
@@ -295,6 +295,15 @@ class AnalyticsEngine:
         self._name_clusters(df, n_clusters)
         df['cluster_nome'] = df['cluster_id'].map(self.cluster_names)
 
+        # RECLASSIFICAR CLIENTES VIP (alto valor) para cluster especial
+        # Se tem flag_vip_valor, reclassifica independente do cluster RFV
+        if 'flag_vip_valor' in df.columns:
+            vip_mask = df['flag_vip_valor'] == True
+            df.loc[vip_mask, 'cluster_nome'] = '👑 VIP Premium'
+            vip_count = vip_mask.sum()
+            if vip_count > 0:
+                print(f"\n   👑 {vip_count} clientes reclassificados como VIP Premium (independente do RFV)")
+
         # Estatísticas por cluster
         cluster_stats = df.groupby('cluster_nome').agg({
             'recencia': 'mean',
@@ -303,7 +312,7 @@ class AnalyticsEngine:
             'nome': 'count'
         }).rename(columns={'nome': 'tamanho'})
 
-        print(f"\n📊 Segmentação RFV ({n_clusters} clusters):")
+        print(f"\n📊 Segmentação RFV ({n_clusters} clusters + VIP):")
         print(cluster_stats)
 
         return df
@@ -442,7 +451,10 @@ class AnalyticsEngine:
         score_propensao = row.get('score_propensao', 50)
 
         # Lógica de sugestão
-        if cluster == "Campeões":
+        if cluster == "👑 VIP Premium":
+            return "🏆 Programa VIP Exclusivo"
+
+        elif cluster == "Campeões":
             return "VIP Exclusivo"
 
         elif cluster == "Fiéis Ticket Baixo":
