@@ -220,14 +220,6 @@ if secao == "🔍 Diagnóstico":
                 if removidos > 0:
                     etapas.append((f"❌ Remover duplicatas (DDD+Telefone)", len(df_sim), removidos))
 
-            # Nome vazio
-            if 'nome' in df_sim.columns:
-                antes = len(df_sim)
-                df_sim = df_sim.dropna(subset=['nome'])
-                removidos = antes - len(df_sim)
-                if removidos > 0:
-                    etapas.append((f"❌ Registros sem Nome", len(df_sim), removidos))
-
             # Limpar espaços em branco
             text_cols = ['nome', 'email', 'telefone']
             for col in text_cols:
@@ -235,6 +227,27 @@ if secao == "🔍 Diagnóstico":
                     df_sim[col] = df_sim[col].astype(str).str.strip()
                     df_sim[col] = df_sim[col].replace('', None)
                     df_sim[col] = df_sim[col].replace('nan', None)
+
+            # Preencher Nome vazio usando Email (parte antes do @)
+            preenchidos = 0
+            if 'nome' in df_sim.columns and 'email' in df_sim.columns:
+                nome_vazio = df_sim['nome'].isna() | (df_sim['nome'] == '')
+                email_valido = df_sim['email'].notna() & (df_sim['email'] != '')
+                preenchimento_necessario = nome_vazio & email_valido
+
+                if preenchimento_necessario.sum() > 0:
+                    df_sim.loc[preenchimento_necessario, 'nome'] = df_sim.loc[preenchimento_necessario, 'email'].str.split('@').str[0]
+                    preenchidos = preenchimento_necessario.sum()
+                    etapas.append((f"ℹ️  Nomes preenchidos com email", len(df_sim), -preenchidos))
+
+            # Nome vazio (remove apenas quem não tem nome E não tem email)
+            if 'nome' in df_sim.columns:
+                antes = len(df_sim)
+                df_sim = df_sim.dropna(subset=['nome'])
+                df_sim = df_sim[df_sim['nome'] != ''].reset_index(drop=True)
+                removidos = antes - len(df_sim)
+                if removidos > 0:
+                    etapas.append((f"❌ Registros sem Nome e sem Email", len(df_sim), removidos))
 
             # Telefone obrigatório
             if 'telefone' in df_sim.columns:
@@ -273,15 +286,17 @@ if secao == "🔍 Diagnóstico":
                 st.warning(f"⚠️ **Apenas {taxa:.1f}% dos registros foram mantidos!**")
                 st.info("""
                 **Possíveis razões:**
-                - Registros com **Nome vazio**
+                - Registros com **Nome vazio E sem Email** (impossível preencher nome)
                 - Registros sem **Telefone** (obrigatório para delivery)
                 - Registros **duplicados** (mesmo DDD+Telefone)
 
                 **Como corrigir sua base:**
-                1. Preencha a coluna "Nome" para todos os registros
-                2. Certifique-se que cada cliente tem **Telefone**
-                3. Remova duplicatas (clientes com mesmo DDD+Telefone)
+                1. Preencha a coluna "Email" para clientes sem Nome (o sistema usará a parte antes do @)
+                2. Ou preencha manualmente a coluna "Nome"
+                3. Certifique-se que cada cliente tem **Telefone**
+                4. Remova duplicatas (clientes com mesmo DDD+Telefone)
 
+                ℹ️ **Nova regra:** Clientes sem Nome mas com Email válido terão o nome preenchido automaticamente com a parte do email antes do @
                 ℹ️ CPF é opcional e não será usado como identificador.
                 """)
             else:
@@ -379,7 +394,8 @@ elif secao == "📊 Analytics":
         - ✅ Removidos registros com Valor = 0 ou negativo
         - ✅ Removidos registros com Pedidos = 0 ou negativo
         - ✅ Removidos outliers extremos (valores anormalmente altos)
-        - ✅ Garantido que todos têm Nome e Telefone
+        - ✅ Clientes sem Nome tiveram nome preenchido com Email (antes do @)
+        - ✅ Garantido que todos têm Nome e Telefone (ou foram removidos)
 
         **Seu Ticket Médio é confiável!** 🎯
         """)

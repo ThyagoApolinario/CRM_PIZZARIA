@@ -133,7 +133,17 @@ class AnalyticsEngine:
                     df[col] = df[col].replace('', None)
                     df[col] = df[col].replace('nan', None)
 
-            # Remover linhas onde Nome está vazio
+            # Preencher Nome vazio usando Email (parte antes do @)
+            if 'nome' in df.columns and 'email' in df.columns:
+                nome_vazio = df['nome'].isna() | (df['nome'] == '')
+                email_valido = df['email'].notna() & (df['email'] != '')
+                preenchimento_necessario = nome_vazio & email_valido
+
+                if preenchimento_necessario.sum() > 0:
+                    df.loc[preenchimento_necessario, 'nome'] = df.loc[preenchimento_necessario, 'email'].str.split('@').str[0]
+                    print(f"   ℹ️  {preenchimento_necessario.sum()} nomes preenchidos com parte do email")
+
+            # Remover linhas onde Nome está vazio (agora remove apenas quem não tem nome E não tem email)
             antes_nome = len(df)
             if 'nome' in df.columns:
                 df = df[df['nome'].notna()]
@@ -141,7 +151,7 @@ class AnalyticsEngine:
                 df = df.reset_index(drop=True)
             removidos_nome = antes_nome - len(df)
             if removidos_nome > 0:
-                print(f"   ❌ Removidos {removidos_nome} registros sem Nome")
+                print(f"   ❌ Removidos {removidos_nome} registros sem Nome e sem Email")
 
             # Garantir que temos Telefone (obrigatório para pizzaria delivery)
             antes_tel = len(df)

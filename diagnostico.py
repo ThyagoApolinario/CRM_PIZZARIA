@@ -75,14 +75,25 @@ if uploaded_file:
         removidos = antes - len(df)
         historico.append((f"Remover duplicatas (CPF): {removidos} removidos", len(df)))
 
-    # Passo 3: Nome vazio
+    # Passo 3: Preencher Nome vazio com Email
+    if 'nome' in df.columns and 'email' in df.columns:
+        nome_vazio = df['nome'].isna() | (df['nome'] == '')
+        email_valido = df['email'].notna() & (df['email'] != '')
+        preenchimento_necessario = nome_vazio & email_valido
+
+        if preenchimento_necessario.sum() > 0:
+            df.loc[preenchimento_necessario, 'nome'] = df.loc[preenchimento_necessario, 'email'].str.split('@').str[0]
+            historico.append((f"Nomes preenchidos com email: {preenchimento_necessario.sum()} preenchidos", len(df)))
+
+    # Passo 4: Nome vazio (remove apenas quem não tem nome E não tem email)
     if 'nome' in df.columns:
         antes = len(df)
         df = df.dropna(subset=['nome'])
+        df = df[df['nome'] != ''].reset_index(drop=True)
         removidos = antes - len(df)
-        historico.append((f"Registros sem Nome: {removidos} removidos", len(df)))
+        historico.append((f"Registros sem Nome e sem Email: {removidos} removidos", len(df)))
 
-    # Passo 4: Telefone E E-mail
+    # Passo 5: Telefone E E-mail
     if 'telefone' in df.columns or 'email' in df.columns:
         antes = len(df)
 
@@ -122,14 +133,17 @@ if uploaded_file:
         st.warning(f"⚠️ Apenas {taxa:.1f}% dos registros foram mantidos!")
         st.info("""
         **Possíveis razões:**
-        1. Muitos registros com **Nome vazio**
-        2. Muitos registros sem **Telefone** nem **E-mail**
+        1. Muitos registros com **Nome vazio E sem E-mail**
+        2. Muitos registros sem **Telefone** (obrigatório para delivery)
         3. Muitos registros **duplicados** (mesmo CPF)
 
         **Como corrigir sua base:**
-        - ✅ Preencha a coluna "Nome" para todos os registros
-        - ✅ Certifique-se que cada cliente tem Telefone OU E-mail
+        - ✅ Preencha a coluna "E-mail" para clientes sem Nome (sistema preencherá nome com email antes do @)
+        - ✅ Ou preencha manualmente a coluna "Nome"
+        - ✅ Certifique-se que cada cliente tem **Telefone**
         - ✅ Remova duplicatas antes de fazer upload
+
+        ℹ️ **Nova regra:** Clientes sem Nome mas com Email válido terão o nome preenchido automaticamente
         """)
     else:
         st.success(f"✅ Base em bom estado! {taxa:.1f}% dos registros serão usados")
